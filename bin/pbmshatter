@@ -1,0 +1,87 @@
+#!/usr/bin/perl
+# -*- cperl -*-
+
+use strict;
+use Image::PPM;
+use Digest::MD5 qw(md5_hex);
+
+my ($file) = @ARGV;
+defined($file) or die "Usage: $0 filename\n";
+open my($F), "<", $file or die "$file: $!";
+my $pbm = Image::PPM->new_pbm_from_fh($F) or die;
+
+my %seen;
+my %hash;
+my $outfile = "aa";
+my ($Y, $X) = ($pbm->rows, $pbm->cols);
+for (my $y = 0; $y < $Y; $y ++) {
+ PIXEL:
+  for (my $x = 0; $x < $X; $x ++) {
+    next PIXEL if $seen{$y}{$x};
+    next PIXEL unless $pbm->get($y, $x); # black only
+
+    my ($ymin, $xmin, $ymax, $xmax) = find_bb_from($pbm, $y, $x, \%seen);
+    my ($h, $w) = ($ymax - $ymin + 1, $xmax - $xmin + 1);
+    warn "Found $h by $w glyph at ($ymin, $xmin)\n";
+    if ($w * $h > 100) {
+      warn "  (skipping, too big)\n";
+      next PIXEL;
+    }
+
+    my $glyph = Image::PPM->new_pbm;
+    for my $r ($ymin .. $ymax) {
+      for my $c ($xmin .. $xmax) {
+        $glyph->set($r - $ymin, $c - $xmin, $pbm->get($r, $c));
+      }
+    }
+
+    { my $hash = md5_hex($glyph->all_data);
+      if ($hash{$hash}) {
+        warn "  (identical to $hash{$hash})\n";
+        next PIXEL;
+      }
+      $hash{$hash} = $outfile;
+      warn "  ** saving as $outfile\n";
+      open my($fh), ">", "$outfile.pbm" or die "open: $!";
+      $glyph->print_pbm($fh);
+      $outfile++;
+    }
+  }
+}
+
+sub find_bb_from {
+  my ($pbm, $y, $x, $seen) = @_;
+  my ($yM, $xM) = ($y, $x); # BR corner of bounding box
+  my ($ym, $xm) = ($y, $x); # TL corner of bounding box
+
+  my @queue = ([$y, $x]);
+  while (@queue) {
+    my ($y, $x) = @{shift @queue};
+    $seen->{$y}{$x} = 1;
+    $yM = $y if $yM < $y;
+    $xM = $x if $xM < $x;
+    $ym = $y if $ym > $y;
+    $xm = $x if $xm > $x;
+    my @adj = black_adjacent_pixels($pbm, $y, $x);
+    for my $pixel (@adj) {
+      my ($py, $px) = @$pixel;
+      push @queue, $pixel unless $seen->{$py}{$px}++;
+    }
+  }
+  return ($ym, $xm, $yM, $xM);
+}
+
+sub black_adjacent_pixels {
+  my ($pbm, $y, $x) = @_;
+  my ($r, $c) = $pbm->dimen;
+  my @b;
+  for my $yy ($y-1, $y, $y+1) {
+    next if $yy < 0 || $yy >= $r;
+    for my $xx ($x-1, $x, $x+1) {
+      next if $yy == $y && $xx == $x;
+      next if $xx < 0 || $xx >= $c;
+      push @b, [$yy, $xx] if $pbm->get($yy, $xx);
+    }
+  }
+  return @b;
+}
