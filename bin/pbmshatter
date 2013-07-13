@@ -4,9 +4,13 @@
 use strict;
 use Image::PPM;
 use Digest::MD5 qw(md5_hex);
+use Getopt::Std;
+
+my %opt = ( d => '.' );
+getopts("d:", \%opt) or die;
 
 my ($file) = @ARGV;
-defined($file) or die "Usage: $0 filename\n";
+defined($file) or die "Usage: $0 [-d output-dir] filename\n";
 open my($F), "<", $file or die "$file: $!";
 my $pbm = Image::PPM->new_pbm_from_fh($F) or die;
 
@@ -42,7 +46,8 @@ for (my $y = 0; $y < $Y; $y ++) {
       }
       $hash{$hash} = $outfile;
       warn "  ** saving as $outfile\n";
-      open my($fh), ">", "$outfile.pbm" or die "open: $!";
+      my $fn = "$opt{d}/$outfile.pbm";
+      open my($fh), ">", $fn or die "open $fn: $!";
       $glyph->print_pbm($fh);
       $outfile++;
     }
@@ -58,20 +63,36 @@ sub find_bb_from {
   while (@queue) {
     my ($y, $x) = @{shift @queue};
     $seen->{$y}{$x} = 1;
-    $yM = $y if $yM < $y;
-    $xM = $x if $xM < $x;
-    $ym = $y if $ym > $y;
-    $xm = $x if $xm > $x;
-    my @adj = black_adjacent_pixels($pbm, $y, $x);
+    $yM = $y, push @queue, bb_pixels($yM, $yM, $xm, $xM) if $yM < $y;
+    $xM = $x, push @queue, bb_pixels($ym, $yM, $xM, $xM) if $xM < $x;
+    $ym = $y, push @queue, bb_pixels($ym, $ym, $xm, $xM) if $ym > $y;
+    $xm = $x, push @queue, bb_pixels($ym, $yM, $xm, $xm) if $xm > $x;
+    my @adj = adjacent_pixels($pbm, $y, $x);
     for my $pixel (@adj) {
       my ($py, $px) = @$pixel;
-      push @queue, $pixel unless $seen->{$py}{$px}++;
+      push @queue, $pixel;
     }
+
+    @queue = grep $pbm->get($_->[0], $_->[1]),  # black only
+      grep ! $seen->{$_->[0]}{$_->[1]},         # discard already-seen pixels
+        @queue
+
   }
   return ($ym, $xm, $yM, $xM);
 }
 
-sub black_adjacent_pixels {
+sub bb_pixels {
+  my ($ym, $yM, $xm, $xM) = @_;
+  my @p;
+  for my $y ($ym .. $yM) {
+    for my $x ($xm .. $xM) {
+      push @p, [$y, $x];
+    }
+  }
+  return @p;
+}
+
+sub adjacent_pixels {
   my ($pbm, $y, $x) = @_;
   my ($r, $c) = $pbm->dimen;
   my @b;
@@ -80,7 +101,7 @@ sub black_adjacent_pixels {
     for my $xx ($x-1, $x, $x+1) {
       next if $yy == $y && $xx == $x;
       next if $xx < 0 || $xx >= $c;
-      push @b, [$yy, $xx] if $pbm->get($yy, $xx);
+      push @b, [$yy, $xx];
     }
   }
   return @b;
